@@ -18,6 +18,9 @@ name = "bounded_spsc_queue"
 test = true
 doctest = false
 
+[dependencies.libc]
+git = "https://github.com/rust-lang/libc"
+
 [features]
 # no features by default
 default = []

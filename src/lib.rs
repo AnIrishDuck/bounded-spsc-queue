@@ -1,20 +1,57 @@
-
-#![feature(core, alloc, box_syntax, optin_builtin_traits)]
-
-extern crate core;
-extern crate alloc;
+extern crate libc;
 
 #[cfg(feature = "benchmark")] extern crate criterion;
 #[cfg(feature = "benchmark")] extern crate time;
 
 
-use alloc::heap::{allocate, deallocate};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use core::{mem, ptr};
-use core::mem::transmute;
+use std::{mem, ptr};
+use std::mem::transmute;
 
 
+use std::cmp;
+const MIN_ALIGN: usize = 16;
+
+extern {
+    fn posix_memalign(memptr: *mut *mut libc::c_void,
+                      align: libc::size_t,
+                      size: libc::size_t) -> libc::c_int;
+}
+
+#[inline]
+pub unsafe fn allocate(size: usize, align: usize) -> *mut u8 {
+    if align <= MIN_ALIGN {
+        libc::malloc(size as libc::size_t) as *mut u8
+    } else {
+        let mut out = ptr::null_mut();
+        let ret = posix_memalign(&mut out,
+                                 align as libc::size_t,
+                                 size as libc::size_t);
+        if ret != 0 {
+            ptr::null_mut()
+        } else {
+            out as *mut u8
+        }
+    }
+}
+
+#[inline]
+pub unsafe fn reallocate(ptr: *mut u8, old_size: usize, size: usize, align: usize) -> *mut u8 {
+    if align <= MIN_ALIGN {
+        libc::realloc(ptr as *mut libc::c_void, size as libc::size_t) as *mut u8
+    } else {
+        let new_ptr = allocate(size, align);
+        ptr::copy(ptr, new_ptr, cmp::min(size, old_size));
+        deallocate(ptr, old_size, align);
+        new_ptr
+    }
+}
+
+#[inline]
+pub unsafe fn deallocate(ptr: *mut u8, _old_size: usize, _align: usize) {
+    libc::free(ptr as *mut libc::c_void)
+}
 
 /// The internal memory buffer used by the queue.
 ///
@@ -58,9 +95,6 @@ pub struct Producer<T> {
 
 unsafe impl<T: Send> Send for Consumer<T> { }
 unsafe impl<T: Send> Send for Producer<T> { }
-
-impl<T> !Sync for Consumer<T> {}
-impl<T> !Sync for Producer<T> {}
 
 impl<T> Buffer<T> {
 
@@ -293,7 +327,7 @@ unsafe fn allocate_buffer<T>(capacity: usize) -> *mut T {
                 .expect("capacity overflow");
 
     let ptr = allocate(size, mem::min_align_of::<T>()) as *mut T;
-    if ptr.is_null() { ::alloc::oom() }
+    if ptr.is_null() { panic!("spsc null") }
     ptr
 }
 
